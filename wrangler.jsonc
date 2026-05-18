@@ -1,0 +1,29 @@
+{
+  "name": "dreamweaver",
+  "main": "src/worker.ts",
+  "compatibility_date": "2024-01-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dreamweaver-db",
+      "database_id": "2b5e05c8-64c3-4ca7-8d63-f26e739762fa"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "bucket_name": "dreamweaver-images",
+      "binding": "R2"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "APP_URL": "https://dreamweaver.pendia-community.workers.dev"
+  }
+}
