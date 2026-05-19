@@ -210,6 +210,25 @@ function getPublishSummaryModel(credits: number): string {
   return credits < 500 ? 'nvidia/nemotron-3-super-120b-a12b:free' : 'minimax/minimax-m1';
 }
 
+// ─── Lens system ───
+// Each lens has: system prompt for interpretation, then a second call extracts symbols
+const LENS_SYSTEM: Record<string, string> = {
+  jung: "You are a Jungian dream analyst. Interpret the dream through Carl Jung's analytical psychology: archetypes, shadow, anima/animus, individuation, collective unconscious. Be warm, depth-oriented, insightful. Connect dream symbols to universal human patterns. Write 2-3 paragraphs.",
+  laozi: "You are Laozi (老子), author of the Dao De Jing. Interpret the dream through Daoist philosophy: Dao, Wu Wei, Yin-Yang, Qi, Ziran. Use nature metaphors (water, valley, uncarved block). Be poetic, paradoxical, gentle. Write 2-3 paragraphs.",
+  paul: "You are the Apostle Paul. Interpret the dream through Pauline theology: faith, grace, Body of Christ, spiritual gifts, suffering and glory. Be passionate, pastoral, theologically deep. Write 2-3 paragraphs.",
+  valentinus: "You are Valentinus, 2nd-century Gnostic teacher. Interpret the dream through Gnostic cosmology: Pleroma, Aeons, Sophia's fall, divine spark, gnosis, archons. Be mystical, cosmological, poetic. Write 2-3 paragraphs.",
+  odin: "You are Odin, the Allfather of Norse mythology. Interpret the dream through Norse wisdom: runes, fate (wyrd), sacrifice for wisdom, the nine worlds, ravens, wolves, Yggdrasil. Be stern but wise, cryptic, poetic. Write 2-3 paragraphs.",
+  horus: "You are Horus, the Egyptian sky god. Interpret the dream through ancient Egyptian cosmology: Ma'at, the Eye of Horus, the journey of the sun, the weighing of the heart, the Duat. Be regal, protective, visionary. Write 2-3 paragraphs.",
+  benjaminfranklin: "You are Benjamin Franklin. Interpret the dream through virtue, pragmatism, self-improvement, and Enlightenment reason. Reference Franklin's 13 virtues. Be witty, practical, moral but not preachy. Write 2-3 paragraphs.",
+  napoleon: "You are Napoleon Bonaparte. Interpret the dream through ambition, strategy, willpower, destiny, and the art of war. Be commanding, analytical, intense. Write 2-3 paragraphs.",
+};
+
+// Second pass: extract symbols from the interpretation
+function extractSymbolsPrompt(lens: string): string {
+  const lensName = lens.charAt(0).toUpperCase() + lens.slice(1);
+  return `Given the dream interpretation above, extract 3-5 key symbols as JSON array: [{"symbol":"name","meaning":"brief meaning"}]. Return ONLY valid JSON array, nothing else.`;
+}
+
 // ─── Router ───
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -218,6 +237,13 @@ export default {
     const path = url.pathname.replace('/api', '');
 
     if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders(origin) });
+
+    // ─── Ensure tables exist (symbols, moods) ───
+    try {
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS dream_symbols (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, dream_id INTEGER NOT NULL, symbol TEXT NOT NULL, meaning TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users(id), FOREIGN KEY (dream_id) REFERENCES dreams(id))').run();
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS dream_moods (id INTEGER PRIMARY KEY AUTOINCREMENT, dream_id INTEGER NOT NULL, mood_before INTEGER DEFAULT 5, mood_after INTEGER DEFAULT 5, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (dream_id) REFERENCES dreams(id))').run();
+      /* extra_data not needed */
+    } catch (e) { /* ignore if column already exists */ }
 
     // ─── Ensure admin account exists ───
     const adminCheck = await env.DB.prepare('SELECT id, password_hash FROM users WHERE username = ?').bind('admin').first<{ id: number; password_hash: string }>();
@@ -340,53 +366,8 @@ export default {
         return json({ received: true }, 200, origin);
       }
 
-      // Public board
-      if (path === '/board' && req.method === 'GET') {
-        const posts = await env.DB.prepare(`
-          SELECT bp.id, bp.user_id, bp.dream_id, bp.title, bp.content, bp.comments_count, bp.created_at, u.username
-          FROM board_posts bp JOIN users u ON bp.user_id = u.id
-          WHERE bp.is_public = 1
-          ORDER BY bp.created_at DESC LIMIT 50
-        `).all();
-        return json({ posts: posts.results }, 200, origin);
-      }
 
-      // Board post detail (public) — returns post with username + dream messages up to publish
-      if (path.match(/^\/board\/\d+\/detail$/) && req.method === 'GET') {
-        const postId = parseInt(path.split('/')[2]);
-        const post = await env.DB.prepare(`
-          SELECT bp.*, u.username FROM board_posts bp
-          JOIN users u ON bp.user_id = u.id
-          WHERE bp.id = ? AND bp.is_public = 1
-        `).bind(postId).first<any>();
-        if (!post) return json({ error: 'Not found' }, 404, origin);
 
-        // Get dream messages: first user message + all AI text responses (not image_generation)
-        // Only up to the point of publishing (we use message count at publish time)
-        const dreamMsgs = await env.DB.prepare(
-          "SELECT role, content, type, created_at FROM dream_messages WHERE dream_id = ? AND type != 'image_generation' ORDER BY created_at ASC"
-        ).bind(post.dream_id).all();
-
-        // Get comments
-        const comments = await env.DB.prepare(`
-          SELECT bc.id, bc.content, bc.created_at, u.username
-          FROM board_comments bc JOIN users u ON bc.user_id = u.id
-          WHERE bc.post_id = ? ORDER BY bc.created_at ASC
-        `).bind(postId).all();
-
-        return json({ post, messages: dreamMsgs.results, comments: comments.results }, 200, origin);
-      }
-
-      // Board comments (public read)
-      if (path.match(/^\/board\/\d+\/comments$/) && req.method === 'GET') {
-        const postId = parseInt(path.split('/')[2]);
-        const comments = await env.DB.prepare(`
-          SELECT bc.id, bc.content, bc.created_at, u.username
-          FROM board_comments bc JOIN users u ON bc.user_id = u.id
-          WHERE bc.post_id = ? ORDER BY bc.created_at ASC
-        `).bind(postId).all();
-        return json({ comments: comments.results }, 200, origin);
-      }
 
       // ══════════════════════════════════════
       // PROTECTED ROUTES
@@ -458,7 +439,7 @@ export default {
       // New dream - first message
       if (path === '/dreams' && req.method === 'POST') {
         const b = await req.json() as any;
-        const { text, mode } = b; // mode: 'text_only' | 'text_and_images'
+        const { text, mode, lens, mood_before, mood_after } = b; // mode: 'text_only' | 'text_and_images'
         const cost = mode === 'text_and_images' ? 3 : 2;
 
         if (user.credits < cost) return json({ error: 'Not enough credits', needed: cost, have: user.credits }, 402, origin);
@@ -470,12 +451,59 @@ export default {
         await env.DB.prepare('INSERT INTO dream_messages (dream_id, role, content) VALUES (?, ?, ?)').bind(dreamId, 'user', text).run();
 
         const model = getInitModel(user.credits);
-        const interpretResponse = await callOpenRouter(env.OPENROUTER_API_KEY, model, [
-          { role: 'system', content: 'You are a dream interpreter. Analyze the dream symbolically and psychologically. Be insightful but concise (200-400 words).' },
+        const systemPrompt = LENS_SYSTEM[lens] || LENS_SYSTEM['jung'];
+
+        // Step 1: Get the interpretation (plain text)
+        let interpretationText = await callOpenRouter(env.OPENROUTER_API_KEY, model, [
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: text },
         ]);
 
-        await env.DB.prepare('INSERT INTO dream_messages (dream_id, role, content, type) VALUES (?, ?, ?, ?)').bind(dreamId, 'assistant', interpretResponse, 'interpretation').run();
+        // If empty, retry with a simpler fallback
+        if (!interpretationText || interpretationText.trim().length < 10) {
+          interpretationText = await callOpenRouter(env.OPENROUTER_API_KEY, 'qwen/qwen3.5-flash-02-23', [
+            { role: 'system', content: 'You are a dream interpreter. Analyze the dream symbolically and psychologically. Be insightful but concise (200-400 words).' },
+            { role: 'user', content: text },
+          ]);
+        }
+
+        // If still empty, use a default
+        if (!interpretationText || interpretationText.trim().length < 10) {
+          interpretationText = 'The dream speaks to your inner journey. The symbols you experienced carry personal meaning that resonates with your current life situation. Consider what emotions arose and what aspects of yourself the dream figures might represent.';
+        }
+
+        // Step 2: Extract symbols in a separate call
+        let symbols: any[] = [];
+        try {
+          const symbolResponse = await callOpenRouter(env.OPENROUTER_API_KEY, 'qwen/qwen3.5-flash-02-23', [
+            { role: 'system', content: 'Extract 3-5 key dream symbols from this interpretation. Return ONLY a JSON array: [{"symbol":"name","meaning":"brief meaning"}]. Nothing else.' },
+            { role: 'user', content: interpretationText },
+          ]);
+          const parsed = JSON.parse(symbolResponse);
+          if (Array.isArray(parsed)) symbols = parsed;
+        } catch {
+          // Symbol extraction failed, continue without symbols
+        }
+
+        // Store the interpretation
+        await env.DB.prepare('INSERT INTO dream_messages (dream_id, role, content, type) VALUES (?, ?, ?, ?)')
+          .bind(dreamId, 'assistant', interpretationText, 'interpretation').run();
+
+        // Store symbols in DB
+        for (const sym of symbols) {
+          try {
+            await env.DB.prepare('INSERT INTO dream_symbols (user_id, dream_id, symbol, meaning) VALUES (?, ?, ?, ?)')
+              .bind(user.userId, dreamId, sym.symbol, sym.meaning).run();
+          } catch {}
+        }
+
+        // Store mood
+        if (mood_before !== undefined || mood_after !== undefined) {
+          try {
+            await env.DB.prepare('INSERT INTO dream_moods (dream_id, mood_before, mood_after) VALUES (?, ?, ?)')
+              .bind(dreamId, mood_before || 5, mood_after || 5).run();
+          } catch {}
+        }
 
         let imageUrls: string[] = [];
 
@@ -496,7 +524,7 @@ export default {
         const summary = interpretResponse.substring(0, 100) + '...';
         await env.DB.prepare('UPDATE dreams SET summary = ? WHERE id = ?').bind(summary, dreamId).run();
 
-        return json({ dreamId, interpretation: interpretResponse, imageUrls, creditsLeft: user.credits - cost }, 200, origin);
+        return json({ dreamId, interpretation: interpretationText, imageUrls, creditsLeft: user.credits - cost }, 200, origin);
       }
 
       // Continue dream conversation
@@ -624,6 +652,26 @@ export default {
         return json({ response, imageUrls, creditsLeft: user.credits - cost }, 200, origin);
       }
 
+      // ─── SYMBOLS ───
+      if (path === '/symbols' && req.method === 'GET') {
+        const symbols = await env.DB.prepare(`
+          SELECT symbol, meaning, COUNT(*) as count, MIN(created_at) as first_seen, MAX(created_at) as last_seen
+          FROM dream_symbols WHERE user_id = ?
+          GROUP BY symbol ORDER BY count DESC LIMIT 50
+        `).bind(user.userId).all();
+        return json({ symbols: symbols.results }, 200, origin);
+      }
+
+      // ─── MOOD DATA ───
+      if (path === '/moods' && req.method === 'GET') {
+        const moods = await env.DB.prepare(`
+          SELECT dm.mood_before, dm.mood_after, dm.created_at, d.title
+          FROM dream_moods dm JOIN dreams d ON dm.dream_id = d.id
+          WHERE d.user_id = ? ORDER BY dm.created_at DESC LIMIT 30
+        `).bind(user.userId).all();
+        return json({ moods: moods.results }, 200, origin);
+      }
+
       // ─── MAIN ORCHESTRATOR ───
       // Chat with AI across all dream history
       if (path === '/main/chat' && req.method === 'POST') {
@@ -635,27 +683,37 @@ export default {
         const cost = 0.5;
         if (user.credits < cost) return json({ error: 'Not enough credits', needed: cost, have: user.credits }, 402, origin);
 
-        // Get all user's dreams with their messages
-        const dreams = await env.DB.prepare('SELECT id, title, summary, created_at FROM dreams WHERE user_id = ? ORDER BY created_at DESC LIMIT 20').bind(user.userId).all();
+        // Get user's dreams (limited to recent 10, with limited messages each)
+        const dreams = await env.DB.prepare('SELECT id, title, summary, created_at FROM dreams WHERE user_id = ? ORDER BY created_at DESC LIMIT 10').bind(user.userId).all();
 
-        // Build context from all dreams
+        // Build compact context from dreams
         let contextParts: string[] = [];
         for (const d of dreams.results as any[]) {
-          const msgs = await env.DB.prepare("SELECT role, content FROM dream_messages WHERE dream_id = ? AND type != 'image_generation' ORDER BY created_at ASC LIMIT 10").bind(d.id).all();
-          const msgSummary = (msgs.results as any[]).map(m => `${m.role}: ${m.content.substring(0, 300)}`).join('\\n');
-          contextParts.push(`Dream "${d.title}" (${d.created_at}):\\n${msgSummary}`);
+          // Only get first user message (the dream) + first AI response per dream
+          const msgs = await env.DB.prepare("SELECT role, content FROM dream_messages WHERE dream_id = ? AND type != 'image_generation' ORDER BY created_at ASC LIMIT 3").bind(d.id).all();
+          const msgSummary = (msgs.results as any[]).map(m => `${m.role}: ${m.content.substring(0, 200)}`).join('\n');
+          contextParts.push(`Dream "${d.title}":\n${msgSummary}`);
         }
 
-        const fullContext = contextParts.join('\\n\\n---\\n\\n');
+        const fullContext = contextParts.join('\n\n');
         const model = getMainChatModel(user.credits);
 
-        const response = await callOpenRouter(env.OPENROUTER_API_KEY, model, [
-          {
-            role: 'system',
-            content: `You are a dream analyst with access to all of the user's dream history. Reference specific dreams and patterns when relevant. Be insightful, connecting themes across dreams when possible. Keep responses concise (200-400 words).\\n\\nUser's dream history:\\n${fullContext}`,
-          },
-          { role: 'user', content: text },
-        ]);
+        let response = '';
+        try {
+          response = await callOpenRouter(env.OPENROUTER_API_KEY, model, [
+            {
+              role: 'system',
+              content: `You are a dream analyst with access to the user's recent dream history. Reference specific dreams when relevant. Be insightful, connecting themes across dreams. Keep responses concise (200-400 words).\n\nUser's dream history:\n${fullContext}`,
+            },
+            { role: 'user', content: text },
+          ]);
+        } catch (e) {
+          console.error('Main chat OpenRouter error:', e);
+        }
+
+        if (!response || response.trim().length === 0) {
+          response = 'I apologize, but I encountered an error processing your request. Please try again.';
+        }
 
         await env.DB.prepare('UPDATE users SET credits = credits - ? WHERE id = ?').bind(cost, user.userId).run();
 
@@ -664,71 +722,7 @@ export default {
 
       // ─── BOARD ───
 
-      // Publish to board (0 credits) — text only, no images
-      if (path === '/board' && req.method === 'POST') {
-        const b = await req.json() as any;
-        const { dreamId, publishMode } = b; // 'summary' | 'full'
 
-        const dream = await env.DB.prepare('SELECT * FROM dreams WHERE id = ? AND user_id = ?').bind(dreamId, user.userId).first<any>();
-        if (!dream) return json({ error: 'Dream not found' }, 404, origin);
-
-        let content = '';
-        let title = dream.title || 'Untitled Dream';
-
-        // Count messages at publish time to know the cutoff
-        const allMsgs = await env.DB.prepare("SELECT role, content, type FROM dream_messages WHERE dream_id = ? AND type != 'image_generation' ORDER BY created_at ASC").bind(dreamId).all();
-        const allTextMsgs = allMsgs.results as any[];
-
-        if (publishMode === 'summary') {
-          // AI summarizes ALL text messages into a summary
-          // Use a reliable model with fallback
-          let summaryResponse = '';
-          const summaryModels = ['qwen/qwen3.5-flash-02-23', 'openai/gpt-5-nano'];
-          for (const model of summaryModels) {
-            try {
-              summaryResponse = await callOpenRouter(env.OPENROUTER_API_KEY, model, [
-                { role: 'system', content: 'Summarize this dream interpretation session in 2-3 sentences for public sharing. Be intriguing but not too personal. Focus on the dream symbols and AI insights.' },
-                ...allTextMsgs.map(m => ({ role: m.role, content: m.content.substring(0, 500) })),
-              ]);
-              if (summaryResponse && summaryResponse.trim().length > 10) break;
-            } catch (e) {
-              console.error('Summary model failed:', model, e);
-            }
-          }
-          if (!summaryResponse || summaryResponse.trim().length < 10) {
-            summaryResponse = 'A dream shared from Dreamweaver.';
-          }
-          // Summary publish: ONLY original dream text + AI summary (NOT all messages)
-          const userMsg = allTextMsgs.find(m => m.role === 'user');
-          content = `My dream: ${userMsg?.content || ''}\n\nAI Summary: ${summaryResponse}`;
-        } else {
-          // Full: get first user message (the dream itself) + all AI text responses
-          const userMsg = allTextMsgs.find(m => m.role === 'user');
-          const aiMsgs = allTextMsgs.filter(m => m.role === 'assistant');
-          content = `My dream: ${userMsg?.content || ''}\\n\\nInterpretations:\\n${aiMsgs.map((m, i) => `AI response ${i + 1}: ${m.content}`).join('\\n\\n')}`;
-        }
-
-        // Check if this dream already has a board post - update it instead of creating duplicate
-        const existingPost = await env.DB.prepare('SELECT id FROM board_posts WHERE dream_id = ? AND user_id = ?').bind(dreamId, user.userId).first();
-        if (existingPost) {
-          await env.DB.prepare("UPDATE board_posts SET title = ?, content = ?, image_urls = NULL, created_at = datetime('now') WHERE id = ?")
-            .bind(title, content, existingPost.id).run();
-        } else {
-          await env.DB.prepare('INSERT INTO board_posts (user_id, dream_id, title, content, image_urls, is_public) VALUES (?, ?, ?, ?, ?, 1)')
-            .bind(user.userId, dreamId, title, content, null).run();
-        }
-
-        return json({ success: true }, 200, origin);
-      }
-
-      // Add comment to board post
-      if (path.match(/^\/board\/\d+\/comments$/) && req.method === 'POST') {
-        const postId = parseInt(path.split('/')[2]);
-        const b = await req.json() as any;
-        await env.DB.prepare('INSERT INTO board_comments (post_id, user_id, content) VALUES (?, ?, ?)').bind(postId, user.userId, b.content).run();
-        await env.DB.prepare('UPDATE board_posts SET comments_count = comments_count + 1 WHERE id = ?').bind(postId).run();
-        return json({ success: true }, 200, origin);
-      }
 
       // ─── STRIPE ───
 
