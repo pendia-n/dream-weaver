@@ -239,7 +239,7 @@ async function submitDream() {
   const modeEl = document.querySelector('input[name="dream-mode"]:checked') as HTMLInputElement;
   const mode = modeEl ? modeEl.value : 'text_only';
   const cost = mode === 'text_and_images' ? 3 : 2;
-  if (currentUser && currentUser.credits < cost) { alert('Not enough credits. Need ' + cost + ', have ' + currentUser.credits); return; }
+  if (currentUser && currentUser.credits < cost) { alert('Not enough credits. Need ' + cost + ', have ' + currentUser.credits + '. Buy more credits first.'); return; }
   const btn = document.getElementById('submit-dream') as HTMLButtonElement;
   btn.disabled = true; btn.textContent = 'Interpreting...';
   try {
@@ -349,7 +349,9 @@ async function sendChat() {
   if (!text) return;
   const mode = (document.querySelector('input[name="chat-mode"]:checked') as HTMLInputElement)?.value || 'text_only';
   let cost = 1; if (mode === 'text_with_image_ref') cost = 2; else if (mode === 'text_with_new_image') cost = 3; else if (mode === 'text_image_and_gen') cost = 4;
-  if (currentUser && currentUser.credits < cost) { alert('Not enough credits'); return; }
+  if (currentUser && currentUser.credits < cost) { alert('Not enough credits. Need ' + cost + ', have ' + currentUser.credits + '. Buy more credits first.'); return; }
+  // Additional guard: image ref modes require a selected image
+  if ((mode === 'text_with_image_ref' || mode === 'text_image_and_gen') && !selectedImage) { alert('Please select an image first by clicking on it.'); return; }
   const chatInput = document.getElementById('chat-input') as HTMLTextAreaElement;
   chatInput.value = '';
   const sendBtn = document.querySelector('.chat-input-area .btn-primary') as HTMLButtonElement;
@@ -430,10 +432,9 @@ async function renderMain() {
   } catch { _mainChatHistory = []; }
   _mainChatOffset = 0;
 
-  app.innerHTML = navHtml() + '<div class="main-content"><div class="dream-chat"><div class="dream-chat-header"><h3>🔮 Main Orchestrator</h3><p style="color:var(--text-dim);font-size:0.85em">Chat across all dreams · Symbols · Moods</p></div><div class="tab-bar"><button id="tab-chat" class="' + (_mainTab === 'chat' ? 'active' : '') + '" onclick="doSwitchTab(\'chat\')">💬 Chat</button><button id="tab-symbols" class="' + (_mainTab === 'symbols' ? 'active' : '') + '" onclick="doSwitchTab(\'symbols\')">🔑 Symbols</button><button id="tab-moods" class="' + (_mainTab === 'moods' ? 'active' : '') + '" onclick="doSwitchTab(\'moods\')">📊 Moods</button></div><div id="main-content-area"></div></div></div>';
+  app.innerHTML = navHtml() + '<div class="main-content"><div class="dream-chat"><div class="dream-chat-header"><h3>🔮 Main Orchestrator</h3><p style="color:var(--text-dim);font-size:0.85em">Chat across all dreams · Symbols</p></div><div class="tab-bar"><button id="tab-chat" class="' + (_mainTab === 'chat' ? 'active' : '') + '" onclick="doSwitchTab(\'chat\')">💬 Chat</button><button id="tab-symbols" class="' + (_mainTab === 'symbols' ? 'active' : '') + '" onclick="doSwitchTab(\'symbols\')">🔑 Symbols</button></div><div id="main-content-area"></div></div></div>';
   if (_mainTab === 'chat') renderMainChat();
   else if (_mainTab === 'symbols') loadSymbols();
-  else if (_mainTab === 'moods') loadMoods();
 }
 
 function doSwitchTab(tab: string) {
@@ -444,7 +445,6 @@ function doSwitchTab(tab: string) {
   if (activeBtn) activeBtn.classList.add('active');
   if (tab === 'chat') renderMainChat();
   else if (tab === 'symbols') loadSymbols();
-  else if (tab === 'moods') loadMoods();
 }
 
 function renderMainChat() {
@@ -480,7 +480,7 @@ function clearMainChat() {
 async function sendMainChat() {
   var text = (document.getElementById('main-input') as HTMLTextAreaElement).value.trim();
   if (!text) return;
-  if (currentUser && currentUser.credits < 0.5) { alert('Need 0.5 credits'); return; }
+  if (currentUser && currentUser.credits < 0.5) { alert('Need 0.5 credits. Buy more credits first.'); return; }
   _mainChatHistory.push({ role: 'user', content: text });
   (document.getElementById('main-input') as HTMLTextAreaElement).value = '';
   renderMainChat();
@@ -514,86 +514,6 @@ async function loadSymbols() {
       area.innerHTML = html;
     } else { area.innerHTML = '<p style="color:var(--text-dim)">No symbols yet. Interpret some dreams first!</p>'; }
   } catch (e: any) { area.innerHTML = '<p class="error">' + e.message + '</p>'; }
-}
-
-// ─── MOODS TAB — Exact copy of Consort's Forecast UI ───
-var _forecastDays = 14;
-
-async function loadMoods() {
-  var area = document.getElementById('main-content-area');
-  if (!area) { renderMain(); return; }
-  area.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-  try {
-    var data = await api('/forecast?days=' + _forecastDays);
-
-    if (!data.data && data.total_dreams === 0) {
-      area.innerHTML = '<div style="text-align:center;padding:2rem"><div style="font-size:2rem;margin-bottom:0.5rem">📊</div><h3>Psychology Forecast</h3><p style="color:var(--text-dim)">No dreams recorded in this period. Keep dreaming!</p></div>';
-      return;
-    }
-
-    var html = '<div style="padding:8px 0">';
-
-    // Period selector
-    html += '<div style="margin-bottom:16px"><label style="font-size:0.85em;color:var(--text-dim);display:block;margin-bottom:4px">Period:</label>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      '<button class="btn-small ' + (_forecastDays === 7 ? 'active' : '') + '" onclick="setForecastDays(7)">Last 7 days</button>' +
-      '<button class="btn-small ' + (_forecastDays === 14 ? 'active' : '') + '" onclick="setForecastDays(14)">Last 14 days</button>' +
-      '<button class="btn-small ' + (_forecastDays === 30 ? 'active' : '') + '" onclick="setForecastDays(30)">Last month</button>' +
-      '<button class="btn-small ' + (_forecastDays === 90 ? 'active' : '') + '" onclick="setForecastDays(90)">Last quarter</button>' +
-      '</div></div>';
-
-    // Dream count
-    html += '<h3 style="margin-bottom:4px">Psychology Forecast</h3>';
-    html += '<p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:16px">' + data.total_dreams + ' dream' + (data.total_dreams !== 1 ? 's' : '') + ' in the last ' + _forecastDays + ' days</p>';
-
-    // Top Emotions
-    if (data.top_emotions && data.top_emotions.length > 0) {
-      html += '<h4 style="margin-bottom:8px;color:var(--text-dim);font-size:0.85em">Top Emotions</h4>';
-      html += '<div style="margin-bottom:16px">';
-      for (var i = 0; i < data.top_emotions.length; i++) {
-        var e = data.top_emotions[i];
-        html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="text-transform:capitalize">' + e.tone + '</span><span style="color:var(--text-dim)">' + e.pct + '%</span></div>' +
-          '<div style="background:var(--bg-input);border-radius:4px;height:8px;overflow:hidden"><div style="background:var(--primary);height:100%;width:' + e.pct + '%;border-radius:4px"></div></div></div>';
-      }
-      html += '</div>';
-    }
-
-    // Mood Trend
-    if (data.mood_trend && data.mood_trend.length > 0) {
-      html += '<h4 style="margin-bottom:8px;color:var(--text-dim);font-size:0.85em">Mood Trend</h4>';
-      html += '<div style="display:flex;gap:4px;align-items:flex-end;height:100px;margin-bottom:4px">';
-      for (var i = 0; i < data.mood_trend.length; i++) {
-        var t = data.mood_trend[i];
-        var bh = Math.max(4, (t.avg_before || 5) * 10);
-        var ah = Math.max(4, (t.avg_after || 5) * 10);
-        html += '<div style="text-align:center;flex:1;min-width:16px"><div style="height:80px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:1px">' +
-          '<div style="background:var(--primary);width:8px;height:' + bh + 'px;border-radius:1px;opacity:0.7"></div>' +
-          '<div style="background:var(--success);width:8px;height:' + ah + 'px;border-radius:1px;opacity:0.7"></div>' +
-          '</div><div style="font-size:0.6rem;color:var(--text-dim);margin-top:2px">' + t.date.slice(5) + '</div></div>';
-      }
-      html += '</div>';
-      html += '<div style="font-size:0.7rem;color:var(--text-dim);display:flex;gap:12px;justify-content:center;margin-bottom:16px"><span><span style="color:var(--primary)">■</span> Before sleep</span><span><span style="color:var(--success)">■</span> After waking</span></div>';
-    }
-
-    // Top Symbols
-    if (data.top_symbols && data.top_symbols.length > 0) {
-      html += '<h4 style="margin-bottom:8px;color:var(--text-dim);font-size:0.85em">Top Symbols</h4>';
-      for (var i = 0; i < data.top_symbols.length; i++) {
-        var s = data.top_symbols[i];
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">' +
-          '<span style="font-size:0.9rem">' + s.symbol + '</span>' +
-          '<span style="font-size:0.8rem;color:var(--text-dim)">×' + s.count + '</span></div>';
-      }
-    }
-
-    html += '</div>';
-    area.innerHTML = html;
-  } catch (e: any) { area.innerHTML = '<p class="error">' + e.message + '</p>'; }
-}
-
-function setForecastDays(days: number) {
-  _forecastDays = days;
-  loadMoods();
 }
 
 // ═══════════════════════════════════
@@ -672,9 +592,7 @@ Object.defineProperty(window, 'selectedImage', { get: function() { return select
 (window as any).sendMainChat = sendMainChat;
 (window as any).doSwitchTab = doSwitchTab;
 (window as any).loadSymbols = loadSymbols;
-(window as any).loadMoods = loadMoods;
 (window as any).clearMainChat = clearMainChat;
-(window as any).setForecastDays = setForecastDays;
 
 async function init() {
   if (token) {

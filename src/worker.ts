@@ -518,7 +518,13 @@ export default {
         if (mode === 'text_and_images') {
           const ts = Date.now();
           for (let i = 0; i < 2; i++) {
-            const imgUrl = await generateImage(env, text.substring(0, 200), dreamId, i, ts);
+            let imgUrl = await generateImage(env, text.substring(0, 200), dreamId, i, ts);
+            // Retry once if failed
+            if (!imgUrl) {
+              console.log(`Image ${i} failed, retrying...`);
+              await new Promise(r => setTimeout(r, 1000));
+              imgUrl = await generateImage(env, text.substring(0, 200), dreamId, i, ts + 1);
+            }
             if (imgUrl) imageUrls.push(imgUrl);
           }
           if (imageUrls.length > 0) {
@@ -582,7 +588,13 @@ export default {
           // Generate new images
           const ts = Date.now();
           for (let i = 0; i < 2; i++) {
-            const imgUrl = await generateImage(env, text.substring(0, 200), dreamId, i, ts);
+            let imgUrl = await generateImage(env, text.substring(0, 200), dreamId, i, ts);
+            // Retry once if failed
+            if (!imgUrl) {
+              console.log(`Chat image ${i} failed, retrying...`);
+              await new Promise(r => setTimeout(r, 1000));
+              imgUrl = await generateImage(env, text.substring(0, 200), dreamId, i, ts + 1);
+            }
             if (imgUrl) imageUrls.push(imgUrl);
           }
           if (imageUrls.length > 0) {
