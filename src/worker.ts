@@ -91,7 +91,13 @@ function base32Decode(s: string): Uint8Array {
 // ─── Model switching: check free models, cache in D1 ───
 const FREE_MODEL_IDS = [
   'openrouter/owl-alpha',
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+  'z-ai/glm-5.1',
+  'minimax/minimax-m2.5:free',
+  'qwen/qwen3-next-80b-a3b-instruct:free',
   'qwen/qwen3-coder:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
   'baidu/cobuddy:free',
   'deepseek/deepseek-v4-flash:free',
   'arcee-ai/trinity-large-thinking:free',
