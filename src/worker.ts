@@ -339,9 +339,9 @@ export default {
         if (existing) return json({ error: 'Username taken' }, 409, origin);
         const hash = await hashPassword(password, env.JWT_SECRET);
         const totpSecret = generateTOTPSecret();
-        const result = await env.DB.prepare('INSERT INTO users (username, password_hash, totp_secret, credits) VALUES (?, ?, ?, 15)').bind(username, hash, totpSecret).run();
+        const result = await env.DB.prepare('INSERT INTO users (username, password_hash, totp_secret, credits) VALUES (?, ?, ?, 3)').bind(username, hash, totpSecret).run();
         const token = await signJWT({ userId: result.meta.last_row_id, username }, env.JWT_SECRET);
-        return json({ token, username, credits: 15, totpSecret, totpEnabled: false }, 200, origin);
+        return json({ token, username, credits: 3, totpSecret, totpEnabled: false }, 200, origin);
       }
 
       if (path === '/auth/login' && req.method === 'POST') {
