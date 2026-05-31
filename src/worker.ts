@@ -392,6 +392,30 @@ export default {
 
       if (path === '/stripe/webhook' && req.method === 'POST') {
         const body = await req.text();
+        const sig = req.headers.get('stripe-signature');
+        if (sig && env.STRIPE_WEBHOOK_SECRET) {
+          try {
+            const parts = sig.split(',');
+            let timestamp = '', sigValue = '';
+            for (const p of parts) {
+              const [k, ...v] = p.split('=');
+              if (k === 't') timestamp = v.join('=');
+              if (k === 'v1') sigValue = v.join('=');
+            }
+            const signedPayload = `${timestamp}.${body}`;
+            const encoder = new TextEncoder();
+            const key = await crypto.subtle.importKey('raw', encoder.encode(env.STRIPE_WEBHOOK_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+            const expectedSig = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
+            const expectedHex = Array.from(new Uint8Array(expectedSig)).map(b => b.toString(16).padStart(2, '0')).join('');
+            if (expectedHex !== sigValue) {
+              console.error('Stripe webhook: invalid signature');
+              return json({ error: 'Invalid signature' }, 401, origin);
+            }
+          } catch (e: any) {
+            console.error('Stripe webhook signature error:', e?.message || e);
+            return json({ error: 'Signature verification failed' }, 401, origin);
+          }
+        }
         try {
           const event = JSON.parse(body);
           if (event.type === 'checkout.session.completed') {
