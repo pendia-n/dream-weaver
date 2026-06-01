@@ -161,7 +161,7 @@ async function callOpenRouter(apiKey: string, model: string, messages: { role: s
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://dreamweaver.pendia-community.workers.dev', 'X-Title': 'Dreamweaver' },
       body: JSON.stringify({ model: useModel, messages, max_tokens: 2048 }),
       signal: ctrl.signal,
     });
@@ -170,7 +170,7 @@ async function callOpenRouter(apiKey: string, model: string, messages: { role: s
         console.error(`Free model ${useModel} failed (${res.status}), retrying with ${model}`);
         const res2 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://dreamweaver.pendia-community.workers.dev', 'X-Title': 'Dreamweaver' },
           body: JSON.stringify({ model, messages, max_tokens: 2048 }),
           signal: ctrl.signal,
         });
@@ -188,7 +188,7 @@ async function callOpenRouter(apiKey: string, model: string, messages: { role: s
       try {
         const res2 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://dreamweaver.pendia-community.workers.dev', 'X-Title': 'Dreamweaver' },
           body: JSON.stringify({ model, messages, max_tokens: 2048 }),
           signal: ctrl.signal,
         });
@@ -197,6 +197,7 @@ async function callOpenRouter(apiKey: string, model: string, messages: { role: s
           return data2.choices?.[0]?.message?.content || '';
         }
       } catch {}
+
     }
     return '';
   } finally { clearTimeout(tid); }
