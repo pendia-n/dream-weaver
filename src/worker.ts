@@ -340,9 +340,9 @@ export default {
         if (existing) return json({ error: 'Username taken' }, 409, origin);
         const hash = await hashPassword(password, env.JWT_SECRET);
         const totpSecret = generateTOTPSecret();
-        const result = await env.DB.prepare('INSERT INTO users (username, password_hash, totp_secret, credits) VALUES (?, ?, ?, 3)').bind(username, hash, totpSecret).run();
+        const result = await env.DB.prepare('INSERT INTO users (username, password_hash, totp_secret, credits) VALUES (?, ?, ?, 0)').bind(username, hash, totpSecret).run();
         const token = await signJWT({ userId: result.meta.last_row_id, username }, env.JWT_SECRET);
-        return json({ token, username, credits: 3, totpSecret, totpEnabled: false }, 200, origin);
+        return json({ token, username, credits: 0, totpSecret, totpEnabled: false }, 200, origin);
       }
 
       if (path === '/auth/login' && req.method === 'POST') {
@@ -421,10 +421,14 @@ export default {
           const event = JSON.parse(body);
           if (event.type === 'checkout.session.completed') {
             const session = event.data.object;
-            const userId = session.metadata?.userId;
+            const userId = session.metadata?.user_id; // checkout sends metadata[user_id]
             const credits = parseInt(session.metadata?.credits || '0');
             if (userId && credits > 0) {
-              await env.DB.prepare('UPDATE users SET credits = credits + ? WHERE id = ?').bind(credits, userId).run();
+              // Idempotency guard: skip if already processed
+              const existing = await env.DB.prepare('SELECT id FROM credit_purchases WHERE stripe_session_id = ?').bind(session.id).first();
+              if (!existing) {
+                await env.DB.prepare('UPDATE users SET credits = credits + ? WHERE id = ?').bind(credits, userId).run();
+              }
             }
           }
         } catch {}
